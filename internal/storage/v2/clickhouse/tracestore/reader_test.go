@@ -1295,5 +1295,8 @@ func TestReader_SearchCapabilities(t *testing.T) {
 		WithoutServiceName:  true,
 		SameSpanConjunction: true,
 		Filter:              &filter,
+		Paginated:           true,
+		SpanSearch:          true,
+		SpanSorting:         true,
 	}, caps)
 }
