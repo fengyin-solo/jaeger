@@ -63,13 +63,7 @@ func (c ServerFlagsConfig) AddFlags(flags *flag.FlagSet) {
 
 // InitFromViper creates tls.Config populated with values retrieved from Viper.
 func (c ClientFlagsConfig) InitFromViper(v *viper.Viper) (configtls.ClientConfig, error) {
-	var p options
-	p.Enabled = v.GetBool(c.Prefix + tlsEnabled)
-	p.CAPath = v.GetString(c.Prefix + tlsCA)
-	p.CertPath = v.GetString(c.Prefix + tlsCert)
-	p.KeyPath = v.GetString(c.Prefix + tlsKey)
-	p.ServerName = v.GetString(c.Prefix + tlsServerName)
-	p.SkipHostVerify = v.GetBool(c.Prefix + tlsSkipHostVerify)
+	p := optionsFromViper(v, c.Prefix)
 
 	if !p.Enabled {
 		var empty options
@@ -78,22 +72,16 @@ func (c ClientFlagsConfig) InitFromViper(v *viper.Viper) (configtls.ClientConfig
 		}
 	}
 
+	if err := p.validate(clientSide, c.Prefix); err != nil {
+		return configtls.ClientConfig{}, err
+	}
+
 	return p.ToOtelClientConfig(), nil
 }
 
 // InitFromViper creates tls.Config populated with values retrieved from Viper.
 func (c ServerFlagsConfig) InitFromViper(v *viper.Viper) (configoptional.Optional[configtls.ServerConfig], error) {
-	var p options
-	p.Enabled = v.GetBool(c.Prefix + tlsEnabled)
-	p.CertPath = v.GetString(c.Prefix + tlsCert)
-	p.KeyPath = v.GetString(c.Prefix + tlsKey)
-	p.ClientCAPath = v.GetString(c.Prefix + tlsClientCA)
-	if s := v.GetString(c.Prefix + tlsCipherSuites); s != "" {
-		p.CipherSuites = strings.Split(stripWhiteSpace(v.GetString(c.Prefix+tlsCipherSuites)), ",")
-	}
-	p.MinVersion = v.GetString(c.Prefix + tlsMinVersion)
-	p.MaxVersion = v.GetString(c.Prefix + tlsMaxVersion)
-	p.ReloadInterval = v.GetDuration(c.Prefix + tlsReloadInterval)
+	p := optionsFromViper(v, c.Prefix)
 
 	if !p.Enabled {
 		var empty options
@@ -102,7 +90,33 @@ func (c ServerFlagsConfig) InitFromViper(v *viper.Viper) (configoptional.Optiona
 		}
 	}
 
+	if err := p.validate(serverSide, c.Prefix); err != nil {
+		return configoptional.None[configtls.ServerConfig](), err
+	}
+
 	return p.ToOtelServerConfig(), nil
+}
+
+// optionsFromViper populates options with every TLS key known to either the
+// client or the server flags, so that options belonging to the other side can
+// be detected and rejected (e.g. via a configuration file where the key is not
+// backed by a registered flag).
+func optionsFromViper(v *viper.Viper, prefix string) options {
+	var p options
+	p.Enabled = v.GetBool(prefix + tlsEnabled)
+	p.CAPath = v.GetString(prefix + tlsCA)
+	p.CertPath = v.GetString(prefix + tlsCert)
+	p.KeyPath = v.GetString(prefix + tlsKey)
+	p.ServerName = v.GetString(prefix + tlsServerName)
+	p.ClientCAPath = v.GetString(prefix + tlsClientCA)
+	p.SkipHostVerify = v.GetBool(prefix + tlsSkipHostVerify)
+	if s := v.GetString(prefix + tlsCipherSuites); s != "" {
+		p.CipherSuites = strings.Split(stripWhiteSpace(s), ",")
+	}
+	p.MinVersion = v.GetString(prefix + tlsMinVersion)
+	p.MaxVersion = v.GetString(prefix + tlsMaxVersion)
+	p.ReloadInterval = v.GetDuration(prefix + tlsReloadInterval)
+	return p
 }
 
 // stripWhiteSpace removes all whitespace characters from a string
