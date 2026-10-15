@@ -56,8 +56,14 @@ func (f *Factory) CreateTraceReader() (tracestore.Reader, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The same tag indexing configuration the writer uses decides which tag predicates
+	// FindSpans may safely push to tag_index.
+	_, tagFilter, err := writerTagFilter(f.v1Factory.Options)
+	if err != nil {
+		return nil, err
+	}
 	return tracestoremetrics.NewReaderDecorator(
-		ctracestore.NewTraceReader(corereader),
+		ctracestore.NewTraceReaderWithSpanSearch(corereader, corereader, tagFilter),
 		f.metricsFactory,
 	), nil
 }
@@ -145,7 +151,10 @@ func (b *withConfigBuilder) build() (*cassandra.Factory, error) {
 	return b.f, nil
 }
 
-func writerOptions(opts *cassandra.Options) ([]cspanstore.Option, error) {
+// writerTagFilter builds the writer's tag indexing filters from options. It returns the writer
+// options to apply and the resulting TagFilter, nil when the deployment indexes every tag. The
+// reader receives the same filter so a tag the writer would not index cannot drive a search.
+func writerTagFilter(opts *cassandra.Options) ([]cspanstore.Option, dbmodel.TagFilter, error) {
 	var tagFilters []dbmodel.TagFilter
 
 	// drop all tag filters
@@ -157,7 +166,7 @@ func writerOptions(opts *cassandra.Options) ([]cspanstore.Option, error) {
 	tagIndexBlacklist := opts.TagIndexBlacklist()
 	tagIndexWhitelist := opts.TagIndexWhitelist()
 	if len(tagIndexBlacklist) > 0 && len(tagIndexWhitelist) > 0 {
-		return nil, errors.New("only one of TagIndexBlacklist and TagIndexWhitelist can be specified")
+		return nil, nil, errors.New("only one of TagIndexBlacklist and TagIndexWhitelist can be specified")
 	}
 	if len(tagIndexBlacklist) > 0 {
 		tagFilters = append(tagFilters, dbmodel.NewBlacklistFilter(tagIndexBlacklist))
@@ -166,10 +175,16 @@ func writerOptions(opts *cassandra.Options) ([]cspanstore.Option, error) {
 	}
 
 	if len(tagFilters) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	} else if len(tagFilters) == 1 {
-		return []cspanstore.Option{cspanstore.TagFilter(tagFilters[0])}, nil
+		return []cspanstore.Option{cspanstore.TagFilter(tagFilters[0])}, tagFilters[0], nil
 	}
 
-	return []cspanstore.Option{cspanstore.TagFilter(dbmodel.NewChainedTagFilter(tagFilters...))}, nil
+	chained := dbmodel.NewChainedTagFilter(tagFilters...)
+	return []cspanstore.Option{cspanstore.TagFilter(chained)}, chained, nil
+}
+
+func writerOptions(opts *cassandra.Options) ([]cspanstore.Option, error) {
+	options, _, err := writerTagFilter(opts)
+	return options, err
 }
